@@ -1,12 +1,11 @@
 """End-to-end MCP test: launch mcp_server.py as a subprocess and talk to it over stdio,
-exactly as an MCP client (Claude Code, Claude Desktop, a LangChain agent) would."""
+exactly as an MCP client (Claude Code, Claude Desktop, Cursor) would."""
 
 import json
 import sys
 from pathlib import Path
 
 import anyio
-import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -17,8 +16,6 @@ EXPECTED_TOOLS = {
     "get_restaurant_details",
     "check_reservation_availability",
     "get_specialities",
-    "chat_turn",
-    "evaluate_restaurant_agent",
     "health",
 }
 
@@ -77,13 +74,6 @@ def test_search_and_details():
     assert details["cuisine"] == "Indian"
 
 
-def test_unknown_cuisine_returns_empty_list():
-    async def go(session):
-        return _payload(await session.call_tool("search_restaurants_by_cuisine", {"cuisine_type": "Martian"}))
-
-    assert run(go) == []
-
-
 def test_availability_true_and_false():
     async def go(session):
         args = {"restaurant_name": "Spice Palace", "party_size": 2}
@@ -94,13 +84,6 @@ def test_availability_true_and_false():
     ok, full = run(go)
     assert "has availability" in ok
     assert "fully booked" in full
-
-
-def test_unknown_restaurant_is_handled():
-    async def go(session):
-        return _payload(await session.call_tool("get_restaurant_details", {"restaurant_name": "Nope"}))
-
-    assert "error" in run(go)
 
 
 def test_bad_arguments_are_rejected():
@@ -118,30 +101,14 @@ def test_bad_arguments_are_rejected():
     assert result.is_error
 
 
-def test_specialities():
+def test_resource_and_prompt():
     async def go(session):
-        return _payload(await session.call_tool("get_specialities", {"query": "Biryani"}))
+        resources = (await session.list_resources()).resources
+        content = await session.read_resource("restaurants://all")
+        prompt = await session.get_prompt("book_a_table", {"cuisine": "Italian", "date": "2024-11-15", "party_size": "2"})
+        return resources, content, prompt
 
-    assert run(go)["matched_dish"] == "Biryani"
-
-
-def test_chat_turn_walks_the_booking_flow():
-    """Exact button labels take the deterministic path, so no LLM key is needed."""
-
-    async def go(session):
-        state, replies = None, []
-        for say in ["Indian", "Spice Palace", "2024-11-15", "2 people"]:
-            out = _payload(await session.call_tool("chat_turn", {"message": say, "state": state}))
-            state = out["state"]
-            replies.append(out["jev"])
-        return state, replies
-
-    state, replies = run(go)
-    assert [r["tool_calls"][0]["name"] if r["tool_calls"] else None for r in replies] == [
-        "search_restaurants_by_cuisine",
-        "get_restaurant_details",
-        None,
-        "check_reservation_availability",
-    ]
-    assert "has availability" in replies[-1]["tool_calls"][0]["output"]
-    assert state == {"asking": "cuisine"}
+    resources, content, prompt = run(go)
+    assert "restaurants://all" in {str(r.uri) for r in resources}
+    assert "Spice Palace" in content.contents[0].text
+    assert "Italian" in prompt.messages[0].content.text

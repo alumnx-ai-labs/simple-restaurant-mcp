@@ -1,8 +1,2 @@
-mcp>=2
-langchain>=1.0
-langchain-google-genai
-pydantic
-langsmith
+mcp>=2,<3
 python-dotenv
-typesafe-sdk
-pytest
